@@ -1,3 +1,4 @@
+import math
 import threading
 import time
 import json
@@ -92,37 +93,47 @@ def lerp_color(ratio):
 
 
 def render_icon():
-    img = Image.new("RGBA", (SIZE, SIZE), (30, 30, 30, 255))
+    S = SIZE * 2  # 2x render for anti-aliased downscale
+    img = Image.new("RGBA", (S, S), (30, 30, 30, 255))
     draw = ImageDraw.Draw(img)
 
     if state["running"] or state["remaining"] > 0:
         ratio = state["remaining"] / max(state["total"], 1)
-        fill_h = int(SIZE * ratio)
-        color = lerp_color(ratio)
+        fill_h = int(S * ratio)
 
+        # Tailwind colors
         if state["flash"]:
-            color = (255, 0, 0) if int(time.time() * 2) % 2 == 0 else (60, 0, 0)
+            pulse = (math.sin(time.time() * 4) + 1) / 2
+            color = (int(55 + 184 * pulse), int(20 * pulse), int(20 * pulse))  # red pulse
+        elif ratio > 0.5:
+            color = (16, 185, 129)   # emerald-500
+        elif ratio > 0.2:
+            color = (245, 158, 11)   # amber-500
+        else:
+            color = (239, 68, 68)    # red-500
 
-        draw.rectangle([0, SIZE - fill_h, SIZE, SIZE], fill=color)
+        draw.rectangle([0, S - fill_h, S, S], fill=color)
 
-    # Draw hours number only
+    # Text
     hours = max(0, state["remaining"]) // 3600
-    if state["remaining"] > 0 or state["running"]:
-        text = str(hours)
-    else:
-        text = "--"
+    text = str(hours) if (state["remaining"] > 0 or state["running"]) else "--"
 
     try:
-        font = ImageFont.truetype("consola.ttf", 42)
+        font = ImageFont.truetype("segoeuib.ttf", 84)
     except OSError:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("consola.ttf", 84)
+        except OSError:
+            font = ImageFont.load_default()
 
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    x = (SIZE - tw) // 2
-    y = (SIZE - th) // 2 - bbox[1]
+    x = (S - tw) // 2 - bbox[0]
+    y = (S - th) // 2 - bbox[1] + 2
+    draw.text((x + 2, y + 2), text, fill=(0, 0, 0, 120), font=font)
     draw.text((x, y), text, fill="white", font=font)
 
+    img = img.resize((SIZE, SIZE), Image.LANCZOS)
     return img
 
 
