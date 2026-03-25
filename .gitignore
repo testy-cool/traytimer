@@ -11,3 +11,4 @@ wheels/
 
 # Runtime state
 timer_state.json
+checkins.jsonl

@@ -17,6 +17,8 @@ ctypes.windll.shcore.SetProcessDpiAwareness(1)
 
 SIZE = 64
 STATE_FILE = Path(__file__).parent / "timer_state.json"
+CHECKIN_INTERVAL = 900  # 15 minutes
+CHECKIN_LOG = Path(__file__).parent / "checkins.jsonl"
 
 state = {
     "total": 0,
@@ -25,7 +27,9 @@ state = {
     "running": False,
     "flash": False,
     "started_at": 0,
+    "checkins_enabled": True,
 }
+checkin_dialog_open = False
 icon_ref = None
 
 
@@ -38,6 +42,7 @@ def save_state():
             "paused": state["paused"],
             "running": state["running"],
             "started_at": state["started_at"],
+            "checkins_enabled": state["checkins_enabled"],
             "saved_at": time.time(),
         }
         STATE_FILE.write_text(json.dumps(data))
@@ -78,6 +83,7 @@ def load_state():
                 state["flash"] = True
                 state["started_at"] = data.get("started_at", 0)
                 winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        state["checkins_enabled"] = data.get("checkins_enabled", True)
     except Exception:
         pass
 
@@ -226,6 +232,80 @@ def set_target_dialog():
             start_timer(secs)
 
 
+def checkin_dialog():
+    global checkin_dialog_open
+    checkin_dialog_open = True
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        result = simpledialog.askstring(
+            "Check-in",
+            "What are you working on? (1-2 words)",
+            parent=root,
+        )
+        root.destroy()
+        if result and result.strip():
+            entry = {
+                "time": datetime.now().isoformat(timespec="seconds"),
+                "elapsed": int(time.time() - state["started_at"]) if state["started_at"] else 0,
+                "remaining": state["remaining"],
+                "note": result.strip(),
+            }
+            with open(CHECKIN_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+    finally:
+        checkin_dialog_open = False
+
+
+def view_checkins_window():
+    import tkinter as tk
+    if not CHECKIN_LOG.exists():
+        entries = []
+    else:
+        entries = []
+        for line in CHECKIN_LOG.read_text(encoding="utf-8").strip().splitlines():
+            try:
+                entries.append(json.loads(line))
+            except Exception:
+                pass
+    root = tk.Tk()
+    root.title("Check-ins")
+    root.attributes("-topmost", True)
+    root.geometry("360x400")
+    root.configure(bg="#1e1e1e")
+    text = tk.Text(root, bg="#1e1e1e", fg="#d4d4d4", font=("Consolas", 11),
+                   wrap="word", borderwidth=0, highlightthickness=0, padx=10, pady=10)
+    text.pack(fill="both", expand=True)
+    if not entries:
+        text.insert("end", "No check-ins yet.")
+    else:
+        current_date = None
+        for e in entries:
+            t = e.get("time", "")
+            date_part = t[:10]
+            time_part = t[11:16]
+            if date_part != current_date:
+                if current_date is not None:
+                    text.insert("end", "\n")
+                text.insert("end", f"--- {date_part} ---\n")
+                current_date = date_part
+            text.insert("end", f"  {time_part}  {e.get('note', '')}\n")
+    text.configure(state="disabled")
+    root.mainloop()
+
+
+def on_view_checkins(icon, item):
+    threading.Thread(target=view_checkins_window, daemon=True).start()
+
+
+def on_toggle_checkins(icon, item):
+    state["checkins_enabled"] = not state["checkins_enabled"]
+    save_state()
+
+
 def set_preset(minutes):
     def action(icon, item):
         start_timer(minutes * 60)
@@ -262,6 +342,7 @@ def on_quit(icon, item):
 
 def timer_loop():
     save_counter = 0
+    checkin_counter = 0
     while True:
         time.sleep(1)
         if icon_ref is None:
@@ -277,6 +358,12 @@ def timer_loop():
             if save_counter >= 30:
                 save_state()
                 save_counter = 0
+            # Check-in prompt
+            if state["checkins_enabled"] and not checkin_dialog_open:
+                checkin_counter += 1
+                if checkin_counter >= CHECKIN_INTERVAL:
+                    checkin_counter = 0
+                    threading.Thread(target=checkin_dialog, daemon=True).start()
         icon_ref.icon = render_icon()
         icon_ref.title = get_tooltip()
 
@@ -295,6 +382,11 @@ def build_menu():
         pystray.MenuItem("Presets", presets),
         pystray.MenuItem(pause_text, on_pause_resume),
         pystray.MenuItem("Reset", on_reset),
+        pystray.MenuItem("View Check-ins", on_view_checkins),
+        pystray.MenuItem(
+            lambda item: "Disable Check-ins" if state["checkins_enabled"] else "Enable Check-ins",
+            on_toggle_checkins,
+        ),
         pystray.MenuItem("Quit", on_quit),
     )
 
