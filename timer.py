@@ -4,6 +4,7 @@ import time
 import json
 import re
 import os
+import shutil
 import winsound
 import ctypes
 from datetime import datetime, timedelta
@@ -256,6 +257,7 @@ def checkin_dialog():
             }
             with open(CHECKIN_LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
+            shutil.copy2(CHECKIN_LOG, str(CHECKIN_LOG) + ".bak")
     finally:
         checkin_dialog_open = False
 

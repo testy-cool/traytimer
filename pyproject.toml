@@ -1,10 +1,13 @@
 [project]
 name = "taskbartimer"
 version = "0.1.0"
-description = "Add your description here"
+description = "Windows 10 system tray countdown timer"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "pillow>=12.1.1",
     "pystray>=0.19.5",
 ]
+
+[project.optional-dependencies]
+dev = ["pyinstaller>=6.0"]

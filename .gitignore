@@ -11,4 +11,9 @@ wheels/
 
 # Runtime state
 timer_state.json
-checkins.jsonl
+checkins.jsonl.bak
+
+# PyInstaller
+build/
+dist/
+*.spec
