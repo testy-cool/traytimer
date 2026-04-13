@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+timer_state.json
+screenshots/
+*.bak
+checkins*.jsonl
