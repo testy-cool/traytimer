@@ -219,7 +219,7 @@ def render_icon():
         secs = max(0, state["remaining"])
         mins = (secs + 59) // 60
         if mins > 9:
-            text = str((mins + 30) // 60) or "0"
+            text = str(min(9, (mins + 30) // 60)) or "0"
         elif mins > 0:
             text = str(mins)
         else:
