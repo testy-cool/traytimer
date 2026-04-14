@@ -12,7 +12,8 @@ from pathlib import Path
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gtk, Gdk, GLib
 
 import pystray
 from PIL import Image, ImageDraw, ImageFont
@@ -469,6 +470,18 @@ def checkin_dialog():
             box.add(check)
 
             dialog.show_all()
+
+            # Center on primary monitor
+            display = Gdk.Display.get_default()
+            monitor = display.get_monitor(0) or display.get_primary_monitor()
+            if monitor:
+                geom = monitor.get_geometry()
+                dialog.get_window().process_updates(True)
+                w, h = dialog.get_size()
+                x = geom.x + (geom.width - w) // 2
+                y = geom.y + (geom.height - h) // 2
+                dialog.move(x, y)
+
             response = dialog.run()
             if response == Gtk.ResponseType.OK:
                 result["text"] = entry.get_text().strip()
