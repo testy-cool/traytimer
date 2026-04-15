@@ -151,32 +151,34 @@ _SEGS = {
     '9': (1,1,1,1,0,1,1), '-': (0,0,0,1,0,0,0), '|': (0,1,1,0,0,0,0),
 }
 
-def _draw_digit(draw, x, y, w, h, digit, color, thick):
-    """Draw a single 7-segment digit at (x, y) with size (w, h)."""
+def _draw_digit(draw, x, y, w, h, digit, color, thick, fat=0):
+    """Draw a single 7-segment digit at (x, y) with size (w, h).
+    fat > 0 expands each segment outward by that many pixels (for glow)."""
     segs = _SEGS.get(digit, (0,0,0,0,0,0,0))
     t = thick
+    f = fat
     # "1" is special: draw centered vertical bar instead of right-aligned segments
     if digit == '1':
         cx = x + w // 2
         my = y + h // 2
-        draw.rectangle([cx, y, cx + t, my - t // 2], fill=color)
-        draw.rectangle([cx, my + t // 2 + t % 2, cx + t, y + h], fill=color)
+        draw.rectangle([cx-f, y-f, cx+t+f, my-t//2+f], fill=color)
+        draw.rectangle([cx-f, my+t//2+t%2-f, cx+t+f, y+h+f], fill=color)
         return
     mx = x + w  # right edge
     my = y + h // 2  # middle y
     by = y + h  # bottom y
     # Horizontal segments (top, middle, bottom)
-    if segs[0]: draw.rectangle([x+t, y, mx-t, y+t], fill=color)
-    if segs[3]: draw.rectangle([x+t, my-t//2, mx-t, my+t//2+t%2], fill=color)
-    if segs[6]: draw.rectangle([x+t, by-t, mx-t, by], fill=color)
+    if segs[0]: draw.rectangle([x+t-f, y-f, mx-t+f, y+t+f], fill=color)
+    if segs[3]: draw.rectangle([x+t-f, my-t//2-f, mx-t+f, my+t//2+t%2+f], fill=color)
+    if segs[6]: draw.rectangle([x+t-f, by-t-f, mx-t+f, by+f], fill=color)
     # Vertical segments (top-left, top-right, bottom-left, bottom-right)
-    if segs[1]: draw.rectangle([x, y+t, x+t, my-t//2], fill=color)
-    if segs[2]: draw.rectangle([mx-t, y+t, mx, my-t//2], fill=color)
-    if segs[4]: draw.rectangle([x, my+t//2+t%2, x+t, by-t], fill=color)
-    if segs[5]: draw.rectangle([mx-t, my+t//2+t%2, mx, by-t], fill=color)
+    if segs[1]: draw.rectangle([x-f, y+t-f, x+t+f, my-t//2+f], fill=color)
+    if segs[2]: draw.rectangle([mx-t-f, y+t-f, mx+f, my-t//2+f], fill=color)
+    if segs[4]: draw.rectangle([x-f, my+t//2+t%2-f, x+t+f, by-t+f], fill=color)
+    if segs[5]: draw.rectangle([mx-t-f, my+t//2+t%2-f, mx+f, by-t+f], fill=color)
 
 
-def _draw_text(draw, cx, cy, text, color, S):
+def _draw_text(draw, cx, cy, text, color, S, fat=0):
     """Draw text centered at (cx, cy) using 7-segment digits."""
     n = len(text)
     if n == 1:
@@ -192,7 +194,7 @@ def _draw_text(draw, cx, cy, text, color, S):
     sx = cx - total_w // 2
     sy = cy - dh // 2
     for i, ch in enumerate(text):
-        _draw_digit(draw, sx + i * (dw + gap), sy, dw, dh, ch, color, thick)
+        _draw_digit(draw, sx + i * (dw + gap), sy, dw, dh, ch, color, thick, fat=fat)
 
 
 def _find_font(size):
@@ -294,47 +296,36 @@ def render_icon():
     draw.rounded_rectangle([scr, scr, S - scr, S - scr], radius=scr_r,
                            fill=screen_color)
 
-    # Screen glow — lighter center, darker edges (CRT bloom)
-    glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    # Bright center spot
-    inner = scr + S // 8
-    gd.rounded_rectangle([inner, inner, S - inner, S - inner], radius=scr_r // 2,
-                         fill=(255, 255, 255, 30))
-    glow = glow.filter(ImageFilter.GaussianBlur(radius=S // 8))
-    img = Image.alpha_composite(img, glow)
+    # Brighter screen center (hard 2-step, no blur — survives downscale)
+    inset = S // 16
+    bright_sc = (min(255, screen_color[0] + 25),
+                 min(255, screen_color[1] + 25),
+                 min(255, screen_color[2] + 25))
+    draw.rounded_rectangle([scr + inset, scr + inset, S - scr - inset, S - scr - inset],
+                           radius=max(1, scr_r - inset), fill=bright_sc)
 
-    # Screen edge darkening (vignette)
-    vig = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    vd = ImageDraw.Draw(vig)
-    vd.rounded_rectangle([scr, scr, S - scr, S - scr], radius=scr_r,
-                         outline=(0, 0, 0, 80), width=S // 10)
-    vig = vig.filter(ImageFilter.GaussianBlur(radius=S // 10))
-    img = Image.alpha_composite(img, vig)
-    draw = ImageDraw.Draw(img)
-
-    # --- Number (phosphor text) ---
+    # --- Number (phosphor text via color-stepping, no blur) ---
     multi = len(text) > 1
     boost = 200 if multi else 130
     fg = (min(255, screen_color[0] + boost),
           min(255, screen_color[1] + boost),
           min(255, screen_color[2] + boost))
 
-    # Draw 7-segment digits (no font calls — immune to Pillow corruption)
-    # Glow layer
-    tg = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    tgd = ImageDraw.Draw(tg)
-    _draw_text(tgd, cx, cy, text, (*fg, 100), S)
-    tg = tg.filter(ImageFilter.GaussianBlur(radius=3))
-    img = Image.alpha_composite(img, tg)
-    draw = ImageDraw.Draw(img)
+    # Layer 1: outer glow — slightly fat segments in mid-bright color
+    mid = (min(255, screen_color[0] + 60),
+           min(255, screen_color[1] + 60),
+           min(255, screen_color[2] + 60))
+    _draw_text(draw, cx, cy, text, mid, S, fat=3)
 
-    # Sharp text
+    # Layer 2: inner glow — barely fat in bright color
+    _draw_text(draw, cx, cy, text, (*fg, 160), S, fat=1)
+
+    # Layer 3: sharp digit — full brightness
     _draw_text(draw, cx, cy, text, fg, S)
 
-    # --- Scanlines (subtle, reduced for multi-digit readability) ---
+    # --- Scanlines ---
     scanline_alpha = 10 if multi else 20
-    for sy in range(scr, S - scr, 3):
+    for sy in range(scr, S - scr, 4):
         draw.line([(scr, sy), (S - scr, sy)], fill=(0, 0, 0, scanline_alpha))
 
     # Final clip to bezel shape
