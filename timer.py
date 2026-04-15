@@ -138,6 +138,63 @@ def capture_screenshot():
         return None
 
 
+# 7-segment display: which segments are on for each digit
+#   _0_
+#  |1  |2
+#   _3_
+#  |4  |5
+#   _6_
+_SEGS = {
+    '0': (1,1,1,0,1,1,1), '1': (0,0,1,0,0,1,0), '2': (1,0,1,1,1,0,1),
+    '3': (1,0,1,1,0,1,1), '4': (0,1,1,1,0,1,0), '5': (1,1,0,1,0,1,1),
+    '6': (1,1,0,1,1,1,1), '7': (1,0,1,0,0,1,0), '8': (1,1,1,1,1,1,1),
+    '9': (1,1,1,1,0,1,1), '-': (0,0,0,1,0,0,0), '|': (0,1,1,0,0,0,0),
+}
+
+def _draw_digit(draw, x, y, w, h, digit, color, thick):
+    """Draw a single 7-segment digit at (x, y) with size (w, h)."""
+    segs = _SEGS.get(digit, (0,0,0,0,0,0,0))
+    t = thick
+    # "1" is special: draw centered vertical bar instead of right-aligned segments
+    if digit == '1':
+        cx = x + w // 2
+        my = y + h // 2
+        draw.rectangle([cx, y, cx + t, my - t // 2], fill=color)
+        draw.rectangle([cx, my + t // 2 + t % 2, cx + t, y + h], fill=color)
+        return
+    mx = x + w  # right edge
+    my = y + h // 2  # middle y
+    by = y + h  # bottom y
+    # Horizontal segments (top, middle, bottom)
+    if segs[0]: draw.rectangle([x+t, y, mx-t, y+t], fill=color)
+    if segs[3]: draw.rectangle([x+t, my-t//2, mx-t, my+t//2+t%2], fill=color)
+    if segs[6]: draw.rectangle([x+t, by-t, mx-t, by], fill=color)
+    # Vertical segments (top-left, top-right, bottom-left, bottom-right)
+    if segs[1]: draw.rectangle([x, y+t, x+t, my-t//2], fill=color)
+    if segs[2]: draw.rectangle([mx-t, y+t, mx, my-t//2], fill=color)
+    if segs[4]: draw.rectangle([x, my+t//2+t%2, x+t, by-t], fill=color)
+    if segs[5]: draw.rectangle([mx-t, my+t//2+t%2, mx, by-t], fill=color)
+
+
+def _draw_text(draw, cx, cy, text, color, S):
+    """Draw text centered at (cx, cy) using 7-segment digits."""
+    n = len(text)
+    if n == 1:
+        dw = S * 28 // 128
+        dh = S * 50 // 128
+        thick = max(2, S * 7 // 128)
+    else:
+        dw = S * 30 // 128
+        dh = S * 50 // 128
+        thick = max(3, S * 8 // 128)
+    gap = S * 6 // 128
+    total_w = n * dw + (n - 1) * gap
+    sx = cx - total_w // 2
+    sy = cy - dh // 2
+    for i, ch in enumerate(text):
+        _draw_digit(draw, sx + i * (dw + gap), sy, dw, dh, ch, color, thick)
+
+
 def _find_font(size):
     """Find a suitable bold sans-serif font on Linux."""
     candidates = [
@@ -219,8 +276,8 @@ def render_icon():
 
         secs = max(0, state["remaining"])
         mins = (secs + 59) // 60
-        if mins > 9:
-            text = str(min(9, (mins + 30) // 60)) or "0"
+        if mins > 99:
+            text = str(min(99, (mins + 30) // 60))
         elif mins > 0:
             text = str(mins)
         else:
@@ -257,31 +314,28 @@ def render_icon():
     draw = ImageDraw.Draw(img)
 
     # --- Number (phosphor text) ---
-    # Much brighter phosphor text — needs to pop against screen
-    fg = (min(255, screen_color[0] + 130),
-          min(255, screen_color[1] + 130),
-          min(255, screen_color[2] + 130))
+    multi = len(text) > 1
+    boost = 200 if multi else 130
+    fg = (min(255, screen_color[0] + boost),
+          min(255, screen_color[1] + boost),
+          min(255, screen_color[2] + boost))
 
-    font = _find_font(S * 65 // 128)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    x = cx - tw // 2 - bbox[0]
-    y = cy - th // 2 - bbox[1]
-
-    # Text glow (phosphor bloom)
+    # Draw 7-segment digits (no font calls — immune to Pillow corruption)
+    # Glow layer
     tg = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     tgd = ImageDraw.Draw(tg)
-    tgd.text((x, y), text, fill=(*fg, 100), font=font)
+    _draw_text(tgd, cx, cy, text, (*fg, 100), S)
     tg = tg.filter(ImageFilter.GaussianBlur(radius=3))
     img = Image.alpha_composite(img, tg)
     draw = ImageDraw.Draw(img)
 
     # Sharp text
-    draw.text((x, y), text, fill=fg, font=font)
+    _draw_text(draw, cx, cy, text, fg, S)
 
-    # --- Scanlines (subtle) ---
+    # --- Scanlines (subtle, reduced for multi-digit readability) ---
+    scanline_alpha = 10 if multi else 20
     for sy in range(scr, S - scr, 3):
-        draw.line([(scr, sy), (S - scr, sy)], fill=(0, 0, 0, 20))
+        draw.line([(scr, sy), (S - scr, sy)], fill=(0, 0, 0, scanline_alpha))
 
     # Final clip to bezel shape
     mask = Image.new("L", (S, S), 0)
@@ -469,14 +523,18 @@ def checkin_dialog():
             check.set_active(True)
             box.add(check)
 
+            dialog.set_position(Gtk.WindowPosition.NONE)
             dialog.show_all()
+
+            # Flush layout so get_size returns real dimensions
+            while Gtk.events_pending():
+                Gtk.main_iteration_do(False)
 
             # Center on primary monitor
             display = Gdk.Display.get_default()
-            monitor = display.get_monitor(0) or display.get_primary_monitor()
+            monitor = display.get_primary_monitor() or display.get_monitor(0)
             if monitor:
                 geom = monitor.get_geometry()
-                dialog.get_window().process_updates(True)
                 w, h = dialog.get_size()
                 x = geom.x + (geom.width - w) // 2
                 y = geom.y + (geom.height - h) // 2
